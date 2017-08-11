@@ -6,7 +6,7 @@ In this lab we'll build a hybrid cluster, and then deploy both a Linux and Windo
 
 > **Difficulty**: Intermediate (assumes basic familiarity with Docker)
 
-> **Time**: Approximately 60 minutes
+> **Time**: Approximately 180 minutes
 
 > **Tasks**:
 >
