@@ -25,11 +25,10 @@ In this lab we'll build a hybrid cluster, and then deploy both a Linux and Windo
 >   * [Task 3.1: Create Dockerfile with Image2Docker](#task3.1)
 >   * [Task 3.2: Build and Push Your Image to Docker Hub](#task3.2)
 >   * [Task 3.3: Deploy the Web App](#task3.3)
-> * [Task 4: Deploy a Multi-OS Application](#task4)
+> * [Task 4: Deploy a Multi-OS Application with Contiv and ACI](#task4)
 >   * [Task 4.1: Examine the Docker Compose File](#task4.1)
 >   * [Task 4.2: Deploy the Application](#task4.2)
 >   * [Task 4.3: Verify the Running Application](#task4.3)
-
 
 ## Document conventions
 
