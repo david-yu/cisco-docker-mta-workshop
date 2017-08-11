@@ -1,4 +1,4 @@
-# Deploying Multi-OS applications to Docker EE
+# Deploying Multi-OS applications on Docker EE with Cisco Contiv and ACI
 
 With the release of Docker overlay networking for Windows Server 2016, it's not possible to create swarm clusters that include Windows Servers. This could be an all Windows cluster, or a hybrid cluster of Linux and Windows machines.
 
