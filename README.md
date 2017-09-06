@@ -1,56 +1,59 @@
-# Deploying Multi-OS applications on Docker EE with Cisco Contiv and ACI
+# Deploying Multi-OS applications to Docker EE
+Docker EE 17.06 is the first Containers-as-a-Service platform to offer production-level support for the integrated management and security of Linux AND Windows Server Containers.
 
-With the release of Docker overlay networking for Windows Server 2016, it's not possible to create swarm clusters that include Windows Servers. This could be an all Windows cluster, or a hybrid cluster of Linux and Windows machines.
-
-In this lab we'll build a hybrid cluster, and then deploy both a Linux and Windows web app, as well as an application that includes both Windows and Linux components. 	
+In this lab we'll build a Docker EE cluster comprised of Windows and Linux nodes. Then we'll deploy both a Linux and Windows web app, as well as a multi-service application that includes both Windows and Linux components.
 
 > **Difficulty**: Intermediate (assumes basic familiarity with Docker)
 
-> **Time**: Approximately 180 minutes
+> **Time**: Approximately 60 minutes
 
-> **Tasks**:
+> **Tasks:**
 >
 > * [Prerequisites](#prerequisites)
-> * [Task 1: Build Docker EE Environment with UCP and DTR](#task1)
->   * [Task 1.1: Install UCP](#task1.1)
->   * [Task 1.2: Add Linux Worker Nodes](#task1.2)
->   * [Task 1.3: Install Docker Trusted Registry](#task1.3)
->   * [Task 1.4: Add a Windows Worker Node](#task1.4)
->   * [Task 1.5: Examine the Cluster](#task1.5)
-> * [Task 2: Deploy a Linux Web App Service](#task2)
+> * [Task 1: Build a Docker EE Cluster](#task1)
+>   * [Task 1.1: Install the UCP manager](#task1.1)
+>   * [Task 1.2: Install a Linux worker node](#task1.2)
+>   * [Task 1.3: Install a Windows worker node](#task1.3)
+>   * [Task 1.4: Install DTR and Create Two Repositories](#task1.4)
+>   * [Task 1.5: Install Self Signed Certs on All Nodes](#task1.5)
+> * [Task 2: Deploy a Linux Web App](#task2)
 >   * [Task 2.1: Clone the Demo Repo](#task2.1)
->   * [Task 2.2: Build and Push Your Image to Docker Hub](#task2.2)
->   * [Task 2.3: Deploy the Web App](#task2.3)
-> * [Task 3: Deploy a Windows Web App Service](#task3)
->   * [Task 3.1: Create Dockerfile with Image2Docker](#task3.1)
->   * [Task 3.2: Build and Push Your Image to Docker Hub](#task3.2)
->   * [Task 3.3: Deploy the Web App](#task3.3)
-> * [Task 4: Deploy a Multi-OS Application with Contiv and ACI](#task4)
->   * [Task 4.1: Examine the Docker Compose File](#task4.1)
->   * [Task 4.2: Deploy the Application](#task4.2)
->   * [Task 4.3: Verify the Running Application](#task4.3)
+>   * [Task 2.2: Build and Push the Linux Web App Image](#task2.2)
+>   * [Task 2.3: Deploy the Web App using UCP](#task2.3)
+> * [Task 3: Deploy a Windows Web App](#task3)
+>   * [Task 3.1: Create the Dockerfile with Image2Docker](#task3.1)
+>   * [Task 3.2: Build and Push Your Image to Docker Trusted Registry](#task3.2)
+>   * [Task 3.3: Deploy the Windows Web App](#task3.3)
 
-## Document conventions
+## Document Conventions
 
-- When you encounter a phrase in between `<` and `>`  you are meant to substitute in a different value.
+- When you encounter a phrase between `<` and `>` you are meant to substitue a different value.
+	For example: if you see `<linux vm name>` you would actually type something like `pod-1-lin01`
 
-	For instance if you see `<linux vm dns name>` you would actually type something like `pdx-lin-01.uswest.cloudapp.azure.com`
-
-- When you see the Linux penguin all the following instructions should be completed in your Linux VM
+- When you see the Linux Penguin, all of the following instructions should be executed in one of your Linux VMs.
 
 	![](./images/linux75.png)
-
-- When you see the Windows flag all the subsequent instructions should be completed in your Windows VM.
+	
+- When you see the Windows Flag, all of the subsequent instructions should be completed in your Windows VM.
 
 	![](./images/windows75.png)
+	
+### Virtual Machine Naming Conventions
+Your VMs are named in the following convention pod-X-[OS]YY.csc.pittsburgh.cisco.com
+Where X is the pod number [OS] is the Operating System type and YY is the Node number.  
 
+> For example: `pod-3-lin02` or `pod-3-win01`
+
+### Virtual Machine Roles
+This lab uses a total of five virtual machines
+
+The Docker EE cluster you will be building will be comprised of five nodes - 4 Linux nodes running Centos7 and 1 Windows node running Server 2016.
+
+![](./images/vm_roles.png)
 
 ## <a name="prerequisites"></a>Prerequisites
 
-You will be provided a set of  virtual machines (one Windows and one Linux) running in Azure, which are already configured with Docker and some base images. You do not need Docker running on your laptop, but you will need a Remote Desktop client to connect to the Windows VM, and an SSH client to connect into the Linux one.
-
-You will also need to sign into Docker Hub to push your Docker images. For this you'll need a Docker ID.
-
+You will be provided a set of five virtual machines (four Linux and 1 Windows), which we will be configuring with Docker	. You do not need Docker running on your laptop, but you will need a Remote Desktop client to connect to the Windows VM, and an SSH client to connect into the Linux one.
 ### 1. RDP Client
 
 - Windows - use the built-in Remote Desktop Connection app.
@@ -65,124 +68,254 @@ You will also need to sign into Docker Hub to push your Docker images. For this 
 
 > **Note**: When you connect to the Windows VM, if you are prompted to run Windows Update, you should cancel out. The labs have been tested with the existing VM state and any changes may cause problems.
 
-### 3. Docker ID
-You will build images and push them to Docker Hub, so you can pull them on different Docker hosts. You will need a Docker ID.
+## <a name="task1"></a>Task 1: Build a Docker EE Cluster
 
-- Sign up for a free Docker ID on [Docker Hub](https://hub.docker.com)
+In this first step we're going to install Docker Universal Control Plane (UCP) and Docker Trusted Registry. UCP is a web-based control plane for Docker containers that can deploy and manage Docker-based applications across Windows and Linux nodes.  Docker Trusted Registry is a private registry server for storing your Docker images.
 
-## <a name="task1"></a>Task 1: Build a Hybrid Swarm
+### <a name="task1.1"></a>Task 1.1: Install the UCP manager
 
-Our first step will be to create a two node swarm cluster. We'll make the Linux node the manager node, and our Windows node will be the worker node.
-
-> **Note**: Window Server 2016 machines can also be manager nodes.
-
-### <a name="task1.1"></a>Task 1.1: Create the Swarm Manager
+> **Note**: In the current version of UCP manager nodes must be Linux. Worker nodes can be Windows or Linux
 
 ![](./images/linux75.png)
 
-1. Either in a terminal window (Mac or Linux) or using Putty (Windows) SSH into your Linux node. The DNS name, username and password should have been provided to you.
+1. Either in a terminal window (Mac or Linux) or using Putty (Windows) SSH into Linux node **01** using the IP Address. The IP Address can be found on your lab information paper.  The username is `docker` and the password is `Docker2017`
 
-	`ssh docker@<linux node DNS name>.westus2.cloudapp.azure.com`
+	`ssh docker@<pod-X-lin01>`
 
-2. Create your swarm by issuing the `docker swarm init` command. This command will create a swarm cluster and add the current node as a manager.
+Start the UCP installation on the current node, and make it your UCP manager.
 
-	Below is an example of what you should see in your VM.
+Run the following command to pull the image and install UCP.
 
-	```
-	$ docker swarm init
-	Swarm initialized: current node (z42u37g25lrmcgbpyef9fd06r) is now a manager.
+```
+docker container run --rm -it --name ucp \
+-v /var/run/docker.sock:/var/run/docker.sock \
+docker/ucp:2.2.2 install \
+--admin-username docker \
+--admin-password Docker2017 \
+--host-address <pod-X-lin01 Ip Address> \
+--interactive
+```
 
-	To add a worker to this swarm, run the following command:
+You will see output similar to the following:
 
-	    docker swarm join \
-	    --token SWMTKN-1-4qm2iur0lkqjmmxlfivyj7rdn9nsso216vaxybhojgmbwa3su7-3vzae67xszr1yphz6flr9emff \
-	    10.0.2.32:2377
+```
+Unable to find image 'docker/ucp:latest' locally
+latest: Pulling from docker/ucp
+88286f41530e: Pull complete 
+054affee0b99: Pull complete 
+1247b4599b73: Pull complete 
+Digest: sha256:fb8935c92876a5255bd5ab26f2a9910918490b7eb8457323d46e416ac2b4d226
+Status: Downloaded newer image for docker/ucp:latest
+INFO[0000] Verifying your system is compatible with UCP 2.2.2 (94d1abdf3) 
+INFO[0000] Your engine version 17.06.1-ee-2, build 8e43158 (3.10.0-514.26.2.el7.x86_64) is compatible 
+WARN[0000] Your system uses devicemapper.  We can not accurately detect available storage space.  Please make sure you have at least 3.00 GB available in /var/lib/docker
+```
 
-	To add a manager to this swarm, run 'docker swarm join-token manager' and follow the instructions.
-	```
+This will take a few minutes while the images are downloaded and deployed.
+When prompted for something similar to the below press enter.
 
-3. Copy the `docker swarm join` output from the `docker swarm init` commmand that you just issued in your VM and paste it into a text editor. Remove the `\` and make the command a single line.
+```
+You may enter additional aliases (SANs) now or press enter to proceed with the above list.
+Additional aliases:
+```
 
-	It should end up looking something like this:
+1. Download the [license file](https://drive.google.com/file/d/0ByQd4O58ibOEazFVRUJYNDYxMjg/view?usp=sharing) to your local laptop.
 
-	`docker swarm join --token SWMKN-1-4qm2iur0lkqjmmxlfivyj7rdn9nsso216vaxybhojgmbwa3su7-3vzae67xszr1yphz6flr9emff 10.0.2.32:2377`
+2. Open a web browser and type in the ip address of `pod-X-lin01` in the address bar.  Ignore any certificate warnings and continue.
 
-	> **Note**: Do not use the command above. Copy the command from the output you got in your Linux VM when you performed the `docker swarm init`
+	![](./images/ucp_login.png)
 
-### <a name="task1.2"></a>Task 1.2: Add a Worker Node
+3. Login to UCP using the credentials we defined during the installation (docker/Docker2017).
+
+	![](./images/ucp_license.png)
+	
+4. Click `Upload License`, navigate to your license location, and double-click the license file
+
+Congratulations, you have installed the UCP manager node.
+
+### <a name="task1.2"></a>Task 1.2: Install a Linux worker nodes
+
+Now that we have a manager node, we'll add the Linux worker nodes to our cluster. Worker nodes are the servers that actually run our Docker-based applications.
+
+1. From the main UCP dashboard click `Nodes` and then `Add Nodes`.
+2. Copy the text in the box to your clipboard.
+	> **Note** There is an icon in the upper right corner of the box that you can click to copy the text to your clipboard
+	![](./images/add_node.png)
+3.  SSH into the remaining Linux nodes (pod-X-lin02 - pod-X-lin04)
+	`ssh docker@<linux node IP Address>`
+4. Paste the text from Step 2 at the command prompt, and press enter.
+
+	You should see the message `This node joined a swarm as a worker.` indicating you've successfully joined the node to the cluster.
+
+5. Switch back to the UCP console in your web browser and click the `x` in the upper right corner to close the `Add Node` window
+
+6. You should be taken to the `Nodes` screen will will see 4 nodes listed at the bottom of your screen. Your  lin01 node is the manager, and the lin02-04 node are your workers.
+
+Congratulations on adding your worker nodes.
+
+In the next step we'll install and configure a Windows worker node.
+
+### <a name="task1.3"></a>Task 1.3: Install a Windows worker node
 
 ![](./images/windows75.png)
 
-1. Use your RDP client to connect into your Windows node. The DNS name, username, and password should have been provided to you.
+Let's add our 5th node to the cluster, a Windows Server 2016 worker node. The process is basically exactly the same as it was for Linux
 
-> **Note**: If you are prompted to make your machine visible on the network choose 'No'
+1. From the Nodes screen, click the blue `Add node` button in the middle of the screen on the right hand side.
 
-> **Note**: DO NOT RUN WINDOWS UPDATE. You will put your machine in an unreachable state until the update finishes, and even then the lab has not been validated on any other configuration.
+> **Note**: You may notice that there is a UI component to select `Linux` or `Windows`. The lab VMs already have the Windows components pre installed, so you do NOT need to select `Windows`. Just leave the selecton on `Linux` and move on to step 2
 
-2. Open a Powershell window by clicking the `Start` button (which looks like a flag in the lower left corner) and then click the Windows Power Shell icon (Do NOT choose Windows Powershell ISE) near the top right.
+2. Copy the text from the dark box shown on the `Add Node` screen.
 
-3. In the Powershell window paste in the `docker swarm join` command you copied from your Linux VM. This command will contact the swarm manager you just created and use the token supplied to join the Swarm cluster.
+	> **Note** There is an icon in the upper right corner of the box that you can click to copy the text to your clipboard
+	
+	![](./images/add_node.png)
 
-	Your output should be similar to this:
+3. Use RDP to log in to `pod-X-win05`.
 
-	```
-	docker swarm join --token SWMTKN-1-4qm2iur0lkqjmmxlfivyj7rdn9nsso216vaxybhojgmbwa3su7-3vzae67xszr1yphz6flr9emff 10.0.2.32:2377
-	This node joined a swarm as a worker.
-	```
+4. From the Start menu open a Powershell window (Start > Powershell (right click and run as administrator)
 
-	> **Note**: Be sure to use the output from your Linux VM. Do not copy the above text.
+4. Paste the text from Step 2 at the command prompt, and press enter.
 
-	> **Note**: Sometimes joining the swarm will cause your RDP connection to reset, if this happens simply reconnect
+	You should see the message `This node joined a swarm as a worker.` indicating you've successfully joined the node to the cluster.
 
-### <a name="task1.3"></a>Task 1.3: Examine the Cluster
+5. Switch back to your web browser and click the `x` in the upper right corner to close the `Add Node` window
+
+6. You should be taken to the `Nodes` screen will will see 5 nodes listed at the bottom of your screen. Your Linux nodes and Windows nodes.
+
+Congratulations on building your UCP cluster. Next up we'll install and configure DTR.
+
+### <a name="task1.4"></a>Task 1.4: Install DTR and Create Two Repositories
 
 ![](./images/linux75.png)
 
-1. Switch back to your Linux VM.
+Like UCP, DTR uses a single Docker container to bootstrap the install process. In the first step we'll kick off that container to install DTR, and then we'll create two repositories that we'll use later for our Tweet apps we're going to deploy.
 
-2. To see the nodes in your cluster issue the `docker node ls` command.
-
+1.  Run the bootstrap to deploy DTR.
+	You will need to supply three inputs:
+	
+	* **--dtr-external URL**: `<pod-X-lin01 IP Address>`
+	* **--ucp-node**: The hostname of `lin02` (For example: pod-X-lin02)
+	* **--ucp-url**: The IP address of the UCP Manager (pod-X-lin01)
+	
 	```
-	$ docker node ls
-	ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS
-	phud37l5prpy4bk76pfdkfofw     win-pdx-20          Ready               Active
-	z42u37g25lrmcgbpyef9fd06r *   lin-pdx-20          Ready               Active              Leader
-	```
-
-3. Verify the operating system family for each node by using `docker inspect` on each of your nodes.
-
-	> **Note** The command below uses the hostnames show above, your hostnames will be different
-
-	```
-	$ docker node inspect win-pdx-20 | grep OS
-	                "OS": "windows"
-	$ docker node inspect lin-pdx-20 | grep OS
-	                "OS": "linux"
+	docker run -it --rm docker/dtr install \
+	--dtr-external-url <pod-X-lin02 IP Address \
+	--ucp-node <pod-X-lin02> \
+	--ucp-username docker \
+	--ucp-password Docker2017 \
+	--ucp-url <pod-X-lin01 IP Address> \
+	--ucp-insecure-tls
 	```
 
-4. Issue the `docker node inspect` command on your Linux node.
-
-	> **Note** The command below uses the hostnames show above, your hostnames will be different
-
-	`$ docker inspect lin-pdx-20`
-
-	Scroll up in your terminal until you find the `Description` section. It should look similar to this:
+	You will see a lot of output scroll by while DTR installs finishing with:
 
 	```
-	"Description": {
-	            "Hostname": "lin-pdx-20",
-	            "Platform": {
-	                "Architecture": "x86_64",
-	                "OS": "linux"
-	            },
+	<output deleted>
+	INFO[0160] Successfully registered dtr with UCP
+	INFO[0161] Establishing connection with Rethinkdb
+	INFO[0162] Background tag migration started
+	INFO[0162] Installation is complete
+	INFO[0162] Replica ID is set to: 8ec3809e352e
+	INFO[0162] You can use flag '--existing-replica-id 8ec3809e352e' when joining other replicas to your Docker Trusted Registry Cluster
+	INFO[0185] finished reading output
 	```
-	What we want to notice here is the hierarchy. We inspected the `node`, and the `OS` is listed under `Platform` so the full path for the `OS` label is `node.platform.OS`. This information will be used in a later part of the lab.
+5. Point your web browser to `https://<pod-X-lin02 IP Address>` and log in with the username `docker` and the password `Docker2017`.
+
+	> **Note**: You need to use `https:` NOT `http`
+
+	> **Note**: Because UCP uses self-signed SSL certs, your web browser may warn you that your connection is not secure. You will need to click through that warning. An example from Chrome is shown below.
+
+Now that DTR is installed, let's go ahead and create a couple of repositories to hold our tweet app images. Repositories are how images are organized within a DTR server. Each image gets pushed to its own repository. Multiple images can be stored within a repository by supplying a different tag to each version.
+
+2. Click the green `New repository` button on the right hand side of the screen. This brings up the new repository dialog
+
+3. Under `REPOSITORY NAME` type `linux_tweet_app` and click `Save`
+
+Let's repeat this process to create a repository for our Windows tweet app.
+
+4. Click the green `New repository` button on the right hand side of the screen. This brings up the new repository dialogue.
+
+5. Under `REPOSITORY NAME` type `windows_tweet_app` and click `Save`
+
+Congratulations you've installed Docker Trusted Registry, and have created two new repositories.
+
+### <a name="task1.5"></a>Task 1.5: Install Self Signed Certs on All Nodes
+
+Docker uses TLS to ensure the identity of the Docker Trusted Registry. In a production environment you would use certs that come from a trusted certificate authority (CA). However, by default when you install UCP and DTR they use self-signed certs. These self-signed certs are not automatically trusted by the Docker engine. In order for them to be trusted, we need to copy down the root CA cert from the DTR server onto each node in the cluster. There is a script on each of your nodes that will do this for you
+
+> **Note**: This step is only necessary in POC environments where trusted 3rd party certs are not used
+
+Perform the following steps on all 4 of your Linux nodes (pod-X-lin01, pod-X-lin02, pod-X-lin03, pod-X-lin04)
+
+![](./images/linux75.png)
+
+1. SSH into the Linux node
+
+2. At the command prompt run the `copy_certs` script passing it the ip address of your linux lin02 node.
+
+	`$ ./copy_certs.sh <pod-X-lin02 Ip address>`
+
+	You should see the following output
+
+
+		% Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+		100  1988  100  1988    0     0   7216      0 --:--:-- --:--:-- --:--:--  7229
+		Updating certificates in /etc/ssl/certs...
+		1 added, 0 removed; done.
+		Running hooks in /etc/ca-certificates/update.d...
+		done.
+
+> **Note**: In some cases you may see some Perl warnings in addition to the above output, these can be safely ignored.
+
+3. Log into the DTR server from the command line to ensure the cert was copied correctly. The username should be `docker` and the password `Docker2017`
+
+	> **Note**: Be sure to substitute the FQDN of your **B** Linux node
+
+	> **Note**: If you see an x509 certificate is from an unknown source error the cert didn't copy correctly, just rerun the above command.
+
+	```
+	$ docker login <pod-X-lin02 IP Address>
+	Username: docker
+	Password: Docker2017
+	```
+
+	You should see a `Login succeeded` message
+
+> **Note**: Remember to repeat these steps on all 4 Linux nodes.
+
+![](./images/windows75.png)
+
+Now we need to do something similar on the two Windows nodes. Perform the following steps on each of the two Windows nodes.
+
+1. RDP into the Windows node
+
+2. From the start menu, open a Powershell window
+
+3. Execute the `copy_certs` script
+
+	`c:\copy_certs.ps1 <pod-X-lin02 Ip Address>`
+
+3. Log into the DTR server from the command line to ensure the cert was copied correctly. The username should be `docker` and the password `Docker2017`
+
+	> **Note**: Be sure to substitute the IP Address of pod-X-lin02 Linux node
+
+	> **Note**: If you see an x509 certificate is from an unknown source error the cert didn't copy correctly, just rerun the above command.
+
+	```
+	$ docker login <pod-X-lin02 Ip Address>
+	Username: docker
+	Password: Docker2017
+	```
+
+	You should see a `Login succeeded` message
+>
+Congratulations, your nodes are now configured to work with your DTR instance.
+
 
 ## <a name="task2"></a>Task 2: Deploy a Linux Web App
 
-Now that we've build our cluster, let's deploy a couple of web apps. These are simple web pages that allow you to send a tweet. One is built on Linux using NGINX and the other is build on Windows Server 2016 using IIS.  
-
-We're going to clone the workshop repo onto each machine, and then build a the webapp for each operating system.
+Now that we've built our cluster, let's deploy a couple of web apps. These are simple web pages that allow you to send a tweet. One is built on Linux using NGINX and the other is build on Windows Server 2016 using IIS.  
 
 Let's start on the Linux node.
 
@@ -190,14 +323,21 @@ Let's start on the Linux node.
 
 ![](./images/linux75.png)
 
-1. Make sure you're in your home directory on your Linux VM
+1. SSH in to your Linux **A** node
+
+2. Make sure you're in your home directory on your Linux VM
 
 	`$ cd ~`
 
-2. Clone the workshop repository.
+2. Use git to clone the workshop repository.
 
 	```
 	$ git clone https://github.com/mikegcoleman/hybrid-workshop.git
+	```
+
+	You should see something like this as the output:
+
+	```
 	Cloning into 'hybrid-workshop'...
 	remote: Counting objects: 13, done.
 	remote: Compressing objects: 100% (10/10), done.
@@ -218,9 +358,9 @@ Let's start on the Linux node.
 
 2. Use `docker build` to build your Linux tweet web app Docker image.
 
-	`$ docker build -t <your docker id>/linux_tweet_app .`
+	`$ docker build -t <pod-X-lin02 IP Address>/docker/linux_tweet_app .`
 
-	> **Note**: Be sure to user your own Docker ID when you build the image.
+	The `-t` tells Docker that you're going to store this image in the `docker` repo on your Docker Trusted Registry node
 
 	> **Note**: Feel free to examine the Dockerfile in this directory if you'd like to see how the image is being built.
 
@@ -248,101 +388,88 @@ Let's start on the Linux node.
 	 ---> ed5f550fc339
 	Removing intermediate container 54020cdec942
 	Successfully built ed5f550fc339
-	Successfully tagged <your docker id>/linux_tweet_app:latest
-	```
-3. Log into Docker Hub with `docker login`.
-
-	> **Note**: You will be using your Docker ID to log into Docker Hub. NOT the username and password supplied as part of this lab.
-
-	```
-	$ docker login
-	Login with your Docker ID to push and pull images from Docker Hub. If you don't have a Docker ID, head over to https://hub.docker.com to create one.
-	Username: <your docker id>
-	Password: <your docker id password>
-	Login Succeeded
+	Successfully tagged  pod-1-lin02/docker/linux_tweet_app:latest
 	```
 
-4. Use `docker push` to upload your image up to Docker Hub.
+4. Use `docker push` to upload your image up to Docker Trusted Registry.
 
-	> **Note**: Be sure to user your own Docker ID when you push the image.
+	> **Note**: You should still be logged into DTR from the previous steps, but if not you will need to log in again.
 
 	```
-	$ docker push <your docker id>/linux_tweet_app
-	The push refers to a repository [docker.io/<your docker id>/linux_tweet_app]
-	4d8d2fc9cf5a: Pushed
-	08e6bf75740d: Mounted from library/nginx
-	f12c15fc56f1: Mounted from library/nginx
-	8781ec54ba04: Mounted from library/nginx
-	latest: digest: sha256:c89bbabda050e5eba0f8ee3bf40a0c672da08107e612e58062b97988ea463277 size: 1155
+	$ docker push <pod-X-lin02 IP Address>/docker/linux_tweet_app
 	```
 
-### <a name="task2.3"></a> Task 2.3: Deploy the Web App
+	The output should be similar to the following:
+
+	```
+	The push refers to a repository [pod-1-lin02/docker/linux_tweet_app]
+	feecabd76a78: Pushed
+	3c749ee6d1f5: Pushed
+	af5bd3938f60: Pushed
+	29f11c413898: Pushed
+	eb78099fbf7f: Pushed
+	latest: digest: sha256:9a376fd268d24007dd35bedc709b688f373f4e07af8b44dba5f1f009a7d70067 size: 1363
+	```
+
+4. In your web browser head back to your DTR server and click `View Details` next to your `linux_tweet_app` repo to see the details of the repo.
+
+5. Click on `Images` from the horizontal menu. Notice that your newly pushed image is now on your DTR.
+
+### <a name="task2.3"></a> Task 2.3: Deploy the Web App using UCP
 
 Now let's run our application by by creating a new service.
 
 Services are application building blocks (although in many cases an application will only have one service, such as this example). Services are based on a single Docker image. Tasks are the individual Docker containers that execute the application. When you create a new service you instantiate at least one task automatically, but you can scale the number of tasks up to meet the needs of your service.
 
-#### Create a new service
+1. In your web browser navigate to your UCP server (`https://<pod-X-lin01 IP Address`)
 
-![](./images/linux75.png)
+2. In the left hand menu click `Services`
 
-1. create a new service with the `docker service create` command.
+3. In the upper right corner click `Create Service`
 
-	```
-	$ docker service create \
-	   --detach=true \
-	   -p 8080:80 \
-	   --name linux_tweet_app \
-	   --constraint 'node.platform.os == linux' \
-	   <your docker id>/linux_tweet_app
-	```
-	Let's look at each part of that command:
+4. Enter `linux_tweet_app` for the name.
 
-	- `docker service create`: Creates a new service based on the supplied image (`<your docker id>/linux_tweet_app`)
+4. Under `Image` enter the path to your image which should be `<linux node b fdqn/docker/linux_tweet_app`
 
-	- `--detach=true`: Runs our service in the background
+5. From the left hand menu click `Scheduling`
 
-	- `-p 8080:80`: Instructs Docker to route any requests coming in to our Swarm cluster on port 8080 to our service running on port 80.
+6. A few lines down the screen click `Add Constraint+`.
 
-	- `--name linux_tweet_app`: Applies a name to our service (if this is omitted Docker will choose one at random)
+	Constraints are used to tell UCP where to run workloads. They are based on labels - in this specific case we're using a built in label that tells us what OS a given node is running (`node.platform.os`). Since this is a Linux-based container we need to make sure it ends up on a Linux node.
 
-	- `--constraint 'node.platform.os == linux'`: This tell swarm to only start this service on a Linux-based host
+7. Enter `node.platform.os == Linux` into the text field
 
-	> **Note**: `node.platform.os` is the label we looked at earlier when we did the `docker node inspect` command
+	![](./images/linux_constraint.png)
 
-2. Use the `docker service ls` command to verify our service was created.
+8. From the left hand menu click `Network`
 
-	```
-	$ docker service ls
-	ID                  NAME                MODE                REPLICAS            IMAGE                                 PORTS
-	sbkz4dl6slrd        linux_tweet_app     replicated          1/1                 mikegcoleman/linux_tweet_app:latest   *:8080->80/tcp
-	```
+9. Click `Publish Port+`
 
-	> **Note**: When the service is fully deployed it should read `1/1` under `REPLICAS`
+	We need to open a port for our web server. Since port 80 is already used by UCP on one node, and DTR on the other, we'll need to pick an alternate port. We'll go with 8088.
 
-3. Check the tasks in our service by running `docker service ps linux_tweet_app`.
+10. Fill out the port fields as shown below
 
-	```
-	$ docker service ps linux_tweet_app
-	ID                  NAME                IMAGE                                 NODE                DESIRED STATE       CURRENT STATE                ERROR               PORTS
-	z8fbzmkd92kv        linux_tweet_app.1   mikegcoleman/linux_tweet_app:latest   lin-pdx-02          Running             Running about a minute ago
-	```
+	![](./images/linux_ports.png)
 
-4. In a web browser on your laptop navigate to `http://<your linux node dns name>:8080`
+11. Click `Confirm`
 
-	You should see your tweet application running. Feel free to send a tweet, since it's running in container your credentials are not saved.
+12. Click `Create` near the bottom right of the screen.
 
-## <a name="task3"></a>Task 3: Deploy the Windows version of our Twitter web application
+After a few seconds you should see a green dot next to your service name. Once you see you green dot you can  point your web browser to `http://<linux node c fqdn>:8088` to see your running website.
+
+> **Note**: You want to go to `http://` not `https://`
+
+## <a name="task3"></a>Task 3: Deploy a Windows Web App
 
 Now we'll deploy the Windows version of the tweet app.
 
 ### <a name="task3.1"></a> Task 3.1: Create the dockerfile with Image2Docker
 
-There is a Windows Server 2016 VHD that contains our Windows Tweet App stored in `c:\` on your cloud-based VM. We're going to use Image2Docker to scan the VHD, and get a dockerfile. We'll build the dockerfile as we did in the previous step, push it to the hub, and then deploy our Windows tweet app.
+There is a Windows Server 2016 VHD that contains our Windows Tweet App stored in `c:\` on your cloud-based VM. We're going to use Image2Docker to scan the VHD, and create a Dockerfile. We'll build the Dockerfile as we did in the previous step, push it to DTR, and then deploy our Windows tweet app.
 
 ![](./images/windows75.png)
 
-1. Move back to your Windows Server 2016 virtual machine, and open a PowerShell window.
+1. Move back to Windows node **A**, and open a PowerShell window.
 
 2. Use Image2Docker's `ConvertTo-Dockerfile` command to create a dockerfile from the VHD.
 
@@ -367,27 +494,28 @@ There is a Windows Server 2016 VHD that contains our Windows Tweet App stored in
 When the process completes you'll find a dockerfile in `c:\windowstweetapp`
 
 
-### <a name="task3.2"></a> Task 3.2: Build and Push the Windows Web App Image
+### <a name="task3.2"></a> Task 3.2: Build and Push Your Image to Docker Trusted Registry
 
 ![](./images/windows75.png)
 
-1. CD into the application directory
+1. CD into the directory where your Image2Docker files have been placed.
 
-	`PS C:\Users\docker> cd c:\windowstweetapp\`
+	`PS C:\Users\docker> cd c:\windowstweetapp\ `
 
 
 2. Use `docker build` to build your Windows tweet web app Docker image.
 
-	`$ docker build -t <your docker id>/windows_tweet_app .`
+	`$ docker build -t <pod-X-lin02 IP Address>/docker/windows_tweet_app .`
 
-	> **Note**: Be sure to user your own Docker ID when you build the image.
+	> **Note**: Be sure to use the FQDN for Linux node **B** when you tag the image.
 
 	> **Note**: Feel free to examine the Dockerfile in this directory if you'd like to see how the image is being built.
 
 	Your output should be similar to what is shown below
 
 	```
-	PS C:\Users\docker\scm\hybrid-workshop\windows_tweet_app\docker build -t <your docker id>/windows_tweet_app .
+	PS C:\Users\docker\scm\hybrid-workshop\windows_tweet_app\docker build -t <linux node b fqdn>/docker/windows_tweet_app .
+
 	Sending build context to Docker daemon  6.144kB
 	Step 1/10 : FROM microsoft/windowsservercore
 	 ---> 590c0c2590e4
@@ -400,25 +528,24 @@ When the process completes you'll find a dockerfile in `c:\windowstweetapp`
 	 ---> d74eead7f408
 	Removing intermediate container ab4dfee81c7e
 	Successfully built d74eead7f408
-	Successfully tagged <your docker id>/windows_tweet_app:latest
+	Successfully tagged <linux node b fqdn>/docker/windows_tweet_app:latest
 	```
 	> **Note**: It will take a few minutes for your image to build. If it takes more than 5 minutes move into your powershell window and press `Enter`. Sometimes the Powershell window will not update the current status of the build process.
 
-4. Log into Docker hub
+4. Log into Docker Trusted Registry
 
 	```
-	PS C:\Users\docker> docker login
-	Login with your Docker ID to push and pull images from Docker Hub. If you don't have a Docker ID, head over to https://hub.docker.com to create one.
-	Username: <your docker id>
-	Password:
+	PS C:\Users\docker> docker login <pod-X-lin02 IP Address>
+	Username: docker
+	Password: Docker2017
 	Login Succeeded
 	```
 
-5. Push your new image up to Docker Hub.
+5. Push your new image up to Docker Trusted Registry.
 
 	```
-	PS C:\Users\docker> docker push <your docker id>/windows_tweet_app
-	The push refers to a repository [docker.io/mikegcoleman/windows_tweet_app]
+	PS C:\Users\docker> docker push <pod-X-lin02 IP Address>/docker/windows_tweet_app
+	The push refers to a repository [<pod-X-lin02 IP Address>/docker/windows_tweet_app]
 	5d08bc106d91: Pushed
 	74b0331584ac: Pushed
 	e95704c2f7ac: Pushed
@@ -432,63 +559,55 @@ When the process completes you'll find a dockerfile in `c:\windowstweetapp`
 	f358be10862c: Skipped foreign layer
 	latest: digest: sha256:e28b556b138e3d407d75122611710d5f53f3df2d2ad4a134dcf7782eb381fa3f size: 2825
 	```
+### <a name="task3.3"></a> Task 3.3: Deploy the Windows Web App
+Now that we have our Windows Tweet App up on the DTR server, let's deploy it. It's going to be almost identical to how did the Linux version with a couple of small exceptions:
 
-### <a name="task3.3"></a> Task 3.3: Deploy the Web App
+* We will use a constraint to put the workload on a Windows node instead of Linux
+* Windows does not currently support ingress load balancing, so we'll exposer the ports in `host` mode using `dnsrr`
 
-We're going to run your application as a service on our swarm cluster. Because of this we need to issue the `docker service create` command from your manager node. With swarm, any work with the swarm needs to be done from a manager node.
+1. In your web browser navigate to your UCP server (`https://<pod-X-lin02 IP Address>`)
 
-> **Note**: If you want to see what happens when you try to issue swarm commands from a worker simply issue the 'docker node ls' command from your Windows Server 2016 vm. You should see an error indicating that the command can only be run from a manager node.
+2. In the left hand menu click `Services`
 
+3. In the upper right corner click `Create Service`
 
-![](./images/linux75.png)
+4. Enter `windows_tweet_app` for the name.
 
-1. Move back to your Linux VM (which is acting as our Swarm manager)
+4. Under `Image` enter the path to your image which should be `<pod-X-lin02 IP Address>/docker/windows_tweet_app`
 
-2. Use `docker service create` to create your Windows tweet app service
+5. From the left hand menu click `Scheduling`
 
-	```
-	$ docker service create \
-	   --name windows_tweet_app \
-	   --publish mode=host,target=80,published=8088 \
-	   --detach=true \
-	   --name windows_tweet_app \
-	   --constraint 'node.platform.os == windows' \
-	   <your docker id>/windows_tweet_app
-	```
+6. A few lines down the screen click `Add Constraint+`.
 
-	> **Note**: In this case we set the constraint to 'node.platform.os == windows' to ensure the service is only started on a Windows-based host.
+	Constraints are used to tell UCP where to run workloads. They are based on labels - in this specific case we're using a built in label that tells us what OS a given node is running (`node.platform.os`). Since this is a Linux-based container we need to make sure it ends up on a Linux node.
 
-	> **Note**: You'll notice the format for publishing the network ports are different with our Windows application. That's because at this time Windows does not support swarm mode's integrated ingress load balancing, and we need to expose the ports in "host mode". See the [Docker documentation](https://docs.docker.com/engine/swarm/services/#publish-ports) for more information on publishing ports with swarm mode.  
+7. Enter `node.platform.os == windows` into the text field
 
-3. Use `docker service ls` to see if your service is running:
+8. From the left hand menu click `Network`
 
-	```
-	ID                  NAME                MODE                REPLICAS            IMAGE                                   PORTS
-	2cax4875jqnp        linux_tweet_app     replicated          1/1                 mikegcoleman/linux_tweet_app:latest     *:8080->80/tcp
-	mo1y1hz592jo        windows_tweet_app   replicated          1/1                 mikegcoleman/windows_tweet_app:latest
-	```
+8. Set the `ENDPOINT SPEC` to `DNS Round Robin`. This tells the service to load balance using DNS. The alternative is VIP, which uses IPVS.
 
-	>**Note**: It may take a minute for the service to start. Until it does you will see `0/1` under `REPLICAS`
+9. Click `Publish Port+`
 
-4. Verify the task started on your Windows node by issuing the `docker service ps windows_tweet_app` command and checking that your Windows host is listed under `NODE`
+	We need to open a port for our web server. This app runs on port 80 which is used by DTR so let's use 8082.
 
-	```
-	$ docker service ps windows_tweet_app
-	ID                  NAME                  IMAGE                                   NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
-	iw4pj3pb1b2g        windows_tweet_app.1   mikegcoleman/windows_tweet_app:latest   win-pdx-20          Running             Started 2 seconds ago
-	```
+10. Fill out the port fields as shown below. **Be sure to set the `Publish Mode` to  `Host`**
 
-5. Visit the running site pointing a web browser on your laptop to `http:<windows vm dns name>:8088`
+	![](./images/windows_ports.png)
 
-	> **Note**: Be sure to specify port *8088*
+11. Click 'Confirm'
+
+12. Click `Create` near the bottom right of the screen.
+
+After a few seconds you should see a green dot next to your service name. Once you see you green dot you can  point your web browser to `http://<pod-X-win05 IP Address>:8082` to see your running website.
+
+> **Note**: You want to go to your Windows node b, and use `http:// ` not `https:// `
 
 ## <a name="task4"></a> Deploying a Multi-OS Application
 
 For our last exercise we'll use a docker compose file to deploy an application that uses a Java front end designed to be deployed on Linux, with a Microsoft SQL Server back end running on windows.
 
 ### <a name="task4.1"></a> Task 4.1: Examine the Docker Compose file
-
-![](./images/linux75.png)
 
 We'll use a Docker Compose file to instantiate our application. With this file we can define all our services and their parameters, as well as other Docker primatives such as networks.
 
@@ -504,7 +623,6 @@ services:
     ports:
       - mode: host
         target: 1433
-        published: 1433
     networks:
      - atsea
     deploy:
@@ -516,13 +634,11 @@ services:
   appserver:
     image: sixeyed/atsea-app:mssql
     ports:
-      - mode: host
-        target: 8080
-        published: 80
+      - target: 8080
+        published: 8080
     networks:
       - atsea
     deploy:
-      endpoint_mode: dnsrr
       placement:
         constraints:
           - 'node.platform.os == linux'
@@ -539,38 +655,44 @@ You may have used Docker Compose before to deploy multi-service applications, bu
 
 ### <a name="task4.2"></a> Task 4.2: Deploy the Application
 
-![](./images/linux75.png)
+1. Move to the UCP console in your web browser
 
-1. Make sure you are in your Linux VM, and change into the `hybrid-workshop` directory
+2. In the left hand menu click `stacks`
 
-	`$ cd ~/hybrid-workshop`
+3. In the upper right click `Create Stack`
 
-2. Use `docker stack deploy` and supply a link to our Docker Compose file as well as a name for our stack (`atsea` in this case) to deploy the app.
+4. Enter `atsea` under `NAME`
 
-	```
-	$ docker stack deploy -c docker-compose.yaml atsea
-	Creating network atsea_atsea
-	Creating service atsea_database
-	Creating service atsea_appserver
-	```
+5. Select `Services` under `MODE`
 
-	The output shows the creation of the two services, and our network.
+6. Select `SHOW VERBOSE COMPOSE OUTPUT`
 
-2. Using `docker stack ps` will show the state of our services
+7. Paste the compose file from above into the `COMPOSE.YML` box
 
-	```
-	$ docker stack ps atsea
-	ID                  NAME                IMAGE                     NODE                DESIRED STATE       CURRENT STATE           ERROR               PORTS
-	dflu6i3po6ur        atsea_appserver.1   sixeyed/atsea-app:mssql   lin-pdx-21          Running             Running 7 minutes ago                       *:80->8080/tcp
-	wgaf4vxptafj        atsea_database.1    sixeyed/atsea-db:mssql    win-pdx-21          Running             Running 6 minutes ago                       *:1433->1433/tcp
-	```
+8.  Click `Create`
 
-	You can see from the output above the two services were deployed to the two different hosts, and are now up and Running
+	You will see some output to show the progress of your deployment, and then a banner will pop up at the bottom indicating your deployment was successful.
 
-	> **Note**: It can take a few minutes for all services to start. Just keep running the `docker stack ps` command until you see both services with a `DESIRED STATE` of `Running`
+9. Click `Done`
+
+The UI shows your stack (`atsea`) and that it's comprised of 2 services and 1 network.
+
+1. Click on the `atsea` stack in the list
+
+2. From the right side of the screen choose `Services` under `Inspect Resource`
+
+	![](./images/inspect_resource.png)
+
+	Here you can see your two services running. It may take a few minutes for the databased service to come up (the dot to turn green). Once it does move on to the next section.
+
 
 ### <a name="task4.3"></a> Task 4.3: Verify the Running Application
 
-1. To see our running web site (an art store) visit `http://<your linux dns name>`.
+1. To see our running web site (an art store) visit `http://<pod-X-lin01:8080>`
+
+	> **Note**: You want to go to `http:// ` not `https:// `
+
+	The thumbnails you see displayed are actually pulled from the SQL database. This is how you know that the connection is working between the database and web front end.
+
 
 This concludes our workshop, thanks for attending.
